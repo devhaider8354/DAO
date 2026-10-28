@@ -158,10 +158,33 @@ static void url_decode(const WCHAR *in, WCHAR *out, size_t n)
     if (!MultiByteToWideChar(CP_UTF8, 0, buf, -1, out, (int)n)) wcsncpy(out, in, n - 1);
 }
 
+/* Strip path separators, reserved characters, bidi overrides, device names
+   and trailing dots/spaces from a server-supplied file name. */
 static void sanitize_name(WCHAR *s)
 {
-    for (; *s; s++)
-        if (wcschr(L"\\/:*?\"<>|", *s) || *s < 32) *s = L'_';
+    WCHAR *w = s;
+    for (WCHAR *p = s; *p; p++) {
+        WCHAR c = *p;
+        if (c == 0x200E || c == 0x200F || (c >= 0x202A && c <= 0x202E) || (c >= 0x2066 && c <= 0x2069)) continue;
+        if (wcschr(L"\\/:*?\"<>|", c) || c < 32) c = L'_';
+        *w++ = c;
+    }
+    *w = 0;
+    WCHAR *start = s;
+    while (*start == L' ' || *start == L'.') start++;
+    if (start != s) memmove(s, start, (wcslen(start) + 1) * sizeof(WCHAR));
+    size_t n = wcslen(s);
+    while (n && (s[n - 1] == L' ' || s[n - 1] == L'.')) s[--n] = 0;
+    if (!n) { wcscpy(s, L"download.bin"); return; }
+
+    size_t base = wcscspn(s, L".");
+    int reserved = (base == 3 && (!_wcsnicmp(s, L"CON", 3) || !_wcsnicmp(s, L"PRN", 3) ||
+                                  !_wcsnicmp(s, L"AUX", 3) || !_wcsnicmp(s, L"NUL", 3))) ||
+                   (base == 4 && (!_wcsnicmp(s, L"COM", 3) || !_wcsnicmp(s, L"LPT", 3)) && s[3] >= L'1' && s[3] <= L'9');
+    if (reserved && n + 1 < MAX_PATH) {
+        memmove(s + 1, s, (n + 1) * sizeof(WCHAR));
+        s[0] = L'_';
+    }
 }
 
 /* ------------------------------------------------------------------ */

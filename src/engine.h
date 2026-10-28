@@ -108,6 +108,8 @@ void      dl_state_path(Download *d, WCHAR *out, size_t n);
 void      dl_set_headers(Download *d, const WCHAR *cookie, const WCHAR *referer, const WCHAR *ua);
 int       dl_fetch_info(Download *d);           /* probe only: name, size, range support */
 void      name_from_url_str(const WCHAR *url, WCHAR *out, size_t n);
+void      dl_sanitize_name(WCHAR *name);
+void      dl_clear_cookie(Download *d);
 
 void      fmt_size(LONGLONG b, WCHAR *out, size_t n);
 void      fmt_time(LONGLONG s, WCHAR *out, size_t n);

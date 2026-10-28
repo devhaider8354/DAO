@@ -289,7 +289,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
         int exists = GetFileAttributesW(exe) != INVALID_FILE_ATTRIBUTES;
         int running = FindWindowW(L"DaoMainWindow", NULL) != NULL;
         char r[128];
-        snprintf(r, sizeof r, "{\"ok\":%s,\"version\":\"2.1\",\"running\":%s}",
+        snprintf(r, sizeof r, "{\"ok\":%s,\"version\":\"2.3\",\"running\":%s}",
                  exists ? "true" : "false", running ? "true" : "false");
         reply(r);
         return 0;

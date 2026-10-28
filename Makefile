@@ -10,8 +10,8 @@ CFLAGS  ?= -O2 -Wall -Wextra -Wno-missing-field-initializers
 CFLAGS  += -municode
 BUILD   := build
 
-APP_LIBS   := -lwinhttp -lcomctl32 -lshell32 -lole32 -luxtheme -ldwmapi -lgdi32 -luser32 -luuid -ladvapi32
-SETUP_LIBS := -lole32 -luuid -lshell32 -ldwmapi -lgdi32 -luser32 -ladvapi32
+APP_LIBS   := -lwinhttp -lcomctl32 -lshell32 -lole32 -luxtheme -ldwmapi -lgdi32 -luser32 -luuid -ladvapi32 -lcrypt32
+SETUP_LIBS := -lole32 -luuid -lshell32 -lgdi32 -luser32 -ladvapi32
 
 ifneq ($(STORE_ID),)
 SETUP_DEFS := -DSTORE_EXTENSION_ID='L"$(STORE_ID)"'

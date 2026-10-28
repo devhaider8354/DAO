@@ -81,6 +81,7 @@ async function handleDownload(item) {
   await ready;
   if (handled.has(item.id)) return;
   handled.add(item.id);
+  setTimeout(() => handled.delete(item.id), 60000);
   const url = item.finalUrl || item.url;
   if (shouldSkip(item, url)) return;
 

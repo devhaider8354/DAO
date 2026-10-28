@@ -8,6 +8,8 @@
 #include <shlobj.h>
 #include <uxtheme.h>
 #include <dwmapi.h>
+#include <wincrypt.h>
+#include <dpapi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +21,7 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "uxtheme.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "crypt32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "user32.lib")
 #endif
@@ -257,6 +260,53 @@ static void save_settings(void)
     WritePrivateProfileStringW(L"dao", L"language", n, ini);
 }
 
+/* Browser cookies are kept encrypted with DPAPI (current user only). */
+static WCHAR *protect_str(const WCHAR *in)
+{
+    DATA_BLOB src, dst;
+    WCHAR *out = NULL;
+    if (!in || !in[0]) return NULL;
+    src.pbData = (BYTE *)in;
+    src.cbData = (DWORD)((wcslen(in) + 1) * sizeof(WCHAR));
+    if (!CryptProtectData(&src, NULL, NULL, NULL, NULL, CRYPTPROTECT_UI_FORBIDDEN, &dst)) return NULL;
+    DWORD len = 0;
+    if (CryptBinaryToStringW(dst.pbData, dst.cbData, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, NULL, &len)) {
+        out = (WCHAR *)malloc((len + 8) * sizeof(WCHAR));
+        if (out) {
+            wcscpy(out, L"dpapi:");
+            if (!CryptBinaryToStringW(dst.pbData, dst.cbData, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, out + 6, &len)) {
+                free(out);
+                out = NULL;
+            }
+        }
+    }
+    LocalFree(dst.pbData);
+    return out;
+}
+
+static WCHAR *unprotect_str(const WCHAR *in)
+{
+    DATA_BLOB src, dst;
+    WCHAR *out = NULL;
+    DWORD len = 0;
+    if (!in || wcsncmp(in, L"dpapi:", 6) != 0) return NULL;
+    if (!CryptStringToBinaryW(in + 6, 0, CRYPT_STRING_BASE64, NULL, &len, NULL, NULL)) return NULL;
+    src.pbData = (BYTE *)malloc(len);
+    src.cbData = len;
+    if (!src.pbData) return NULL;
+    if (CryptStringToBinaryW(in + 6, 0, CRYPT_STRING_BASE64, src.pbData, &len, NULL, NULL) &&
+        CryptUnprotectData(&src, NULL, NULL, NULL, NULL, CRYPTPROTECT_UI_FORBIDDEN, &dst)) {
+        if (dst.cbData >= sizeof(WCHAR)) {
+            out = (WCHAR *)calloc(dst.cbData / sizeof(WCHAR) + 1, sizeof(WCHAR));
+            if (out) memcpy(out, dst.pbData, dst.cbData);
+        }
+        SecureZeroMemory(dst.pbData, dst.cbData);
+        LocalFree(dst.pbData);
+    }
+    free(src.pbData);
+    return out;
+}
+
 static void save_list(void)
 {
     WCHAR p[MAX_PATH];
@@ -266,10 +316,12 @@ static void save_list(void)
     for (int i = 0; i < g_ndl; i++) {
         Download *d = g_dl[i];
         if (d->remove_after) continue;
+        WCHAR *cookie = (d->status == ST_DONE) ? NULL : protect_str(d->cookie);
         fwprintf(f, L"%d\t%lld\t%d\t%ls\t%ls\t%ls\t%ls\t%d\t%ls\t%ls\t%ls\n",
                  d->status == ST_DONE ? 1 : 0, d->total, d->nconn,
                  d->url, d->folder, d->path[0] ? d->path : L"-", d->name, d->name_fixed,
-                 d->cookie ? d->cookie : L"", d->referer ? d->referer : L"", d->ua ? d->ua : L"");
+                 cookie ? cookie : L"", d->referer ? d->referer : L"", d->ua ? d->ua : L"");
+        free(cookie);
     }
     fclose(f);
 }
@@ -286,7 +338,7 @@ static WCHAR *next_field(WCHAR **p)
 static void load_list(void)
 {
     WCHAR p[MAX_PATH];
-    static WCHAR line[65536];
+    static WCHAR line[256 * 1024];
     cfg_path(p, L"downloads.txt");
     FILE *f = _wfopen(p, L"r, ccs=UTF-8");
     if (!f) return;
@@ -306,7 +358,13 @@ static void load_list(void)
         wcsncpy(d->name, name, MAX_PATH - 1);
         d->total = _wtoi64(total);
         if (fixed) d->name_fixed = _wtoi(fixed);
-        if (cookie || referer || ua) dl_set_headers(d, cookie, referer, ua);
+        if (cookie || referer || ua) {
+            WCHAR *plain = unprotect_str(cookie);
+            /* lists written by older versions stored the cookie as plain text */
+            const WCHAR *c = plain ? plain : (cookie && wcsncmp(cookie, L"dpapi:", 6) != 0 ? cookie : NULL);
+            dl_set_headers(d, c, referer, ua);
+            if (plain) { SecureZeroMemory(plain, wcslen(plain) * sizeof(WCHAR)); free(plain); }
+        }
         if (_wtoi(done)) {
             d->status = ST_DONE;
         } else {
@@ -1187,18 +1245,13 @@ static void dlg_set_icon(AddDlg *a)
         a->icon = fi.hIcon;
 }
 
-static void clean_name(WCHAR *s)
-{
-    for (; *s; s++) if (wcschr(L"\\/:*?\"<>|", *s) || *s < 32) *s = L'_';
-}
-
 static void dlg_finish(AddDlg *a, int mode)   /* 0 = cancel, 1 = start, 2 = later */
 {
     if (mode) {
         WCHAR name[MAX_PATH], n[8];
         GetWindowTextW(a->name, name, MAX_PATH);
         trim(name);
-        clean_name(name);
+        dl_sanitize_name(name);
         GetWindowTextW(a->conn, n, 8);
         int nc = _wtoi(n);
         if (nc < 1) nc = 1;
@@ -2079,7 +2132,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT m, WPARAM w, LPARAM l)
             memcpy(u, cds->lpData, n * sizeof(WCHAR));
             u[n] = 0;
             trim(u);
-            if (is_url(u)) add_download(u);
+            if (is_url(u)) show_add_dialog(u, NULL, NULL, NULL, NULL, -1);
         }
         return TRUE;
     }
@@ -2100,7 +2153,10 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         if (final) {
             dl_wait(d, 2000);
             save_list();
-            if (st == ST_DONE) MessageBeep(MB_OK);
+            if (st == ST_DONE) {
+                dl_clear_cookie(d);                           /* session cookies are no longer needed */
+                MessageBeep(MB_OK);
+            }
         }
         update_buttons();
         refresh_all();
@@ -2297,7 +2353,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
         wcsncpy(u, cmd, ARRAYSIZE(u) - 1);
         u[ARRAYSIZE(u) - 1] = 0;
         trim(u);
-        if (is_url(u)) add_download(u);
+        if (is_url(u)) show_add_dialog(u, NULL, NULL, NULL, NULL, -1);
     }
 
     MSG msgq;

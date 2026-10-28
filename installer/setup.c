@@ -23,7 +23,6 @@
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <objbase.h>
-#include <dwmapi.h>
 #include <stdio.h>
 #include <wchar.h>
 #include "payload.h"
@@ -480,6 +479,17 @@ static void run_app_unelevated(void)
 /* ------------------------------------------------------------------ */
 /*                              Uninstall                              */
 /* ------------------------------------------------------------------ */
+/* Only uninstall from the folder Windows has on record, never from a copy elsewhere. */
+static int is_registered_install_dir(const WCHAR *dir)
+{
+    WCHAR loc[MAX_PATH];
+    DWORD sz = sizeof(loc);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, UNINSTALL_KEY, L"InstallLocation", RRF_RT_REG_SZ,
+                     NULL, loc, &sz) != ERROR_SUCCESS)
+        return 0;
+    return _wcsicmp(loc, dir) == 0;
+}
+
 static int uninstall(void)
 {
     WCHAR self[MAX_PATH], buf[MAX_PATH * 2];
@@ -487,6 +497,15 @@ static int uninstall(void)
     wcscpy(g_dir, self);
     WCHAR *s = wcsrchr(g_dir, L'\\');
     if (s) *s = 0;
+
+    if (!is_registered_install_dir(g_dir)) {
+        MessageBoxW(NULL, tr(L"This copy of the uninstaller is not inside the DAO install folder.\n"
+                             L"Uninstall DAO from Settings > Apps instead.",
+                             L"أداة الإزالة هذه ليست داخل مجلد تثبيت DAO.\n"
+                             L"قم بإزالة البرنامج من الإعدادات > التطبيقات."),
+                    tr(L"Uninstall DAO", L"إزالة DAO"), MB_ICONWARNING | MB_DIR);
+        return 1;
+    }
 
     if (MessageBoxW(NULL, tr(L"Remove DAO from this computer?\n\n(Your download list and downloaded files are kept.)",
                              L"هل تريد إزالة DAO من الجهاز؟\n\n(لن تُحذف قائمة التحميلات ولا الملفات التي حمّلتها)"),
@@ -526,9 +545,19 @@ static int uninstall(void)
     if (desk_lnk[0]) DeleteFileW(desk_lnk);
     CoUninitialize();
 
-    /* remove the folder (including this uninstaller) after we exit */
+    /* remove the now-empty folders; only files we installed were deleted above */
+    static const WCHAR *dirs[] = {
+        L"chrome-extension\\_locales\\en", L"chrome-extension\\_locales\\ar", L"chrome-extension\\_locales",
+        L"chrome-extension\\icons", L"chrome-extension",
+    };
+    for (size_t i = 0; i < ARRAYSIZE(dirs); i++) {
+        swprintf(buf, ARRAYSIZE(buf), L"%ls\\%ls", g_dir, dirs[i]);
+        RemoveDirectoryW(buf);
+    }
+
+    /* delete this uninstaller and the (empty) install folder after we exit */
     WCHAR cmd[MAX_PATH * 3];
-    swprintf(cmd, ARRAYSIZE(cmd), L"cmd.exe /c ping 127.0.0.1 -n 3 > nul & rmdir /s /q \"%ls\"", g_dir);
+    swprintf(cmd, ARRAYSIZE(cmd), L"cmd.exe /c ping 127.0.0.1 -n 3 > nul & del /f /q \"%ls\" & rmdir \"%ls\"", self, g_dir);
     STARTUPINFOW si = { sizeof(si) };
     si.dwFlags = STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_HIDE;
@@ -658,8 +687,28 @@ static HFONT mkfont(int px, int weight, const WCHAR *face)
                        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, face);
 }
 
+/* dwmapi.dll is not a KnownDLL: load it from System32 explicitly so an elevated
+   installer started from the Downloads folder cannot pick up a planted copy. */
+static void dark_title_bar(HWND h)
+{
+    typedef HRESULT (WINAPI *SetAttr)(HWND, DWORD, LPCVOID, DWORD);
+    HMODULE dwm = LoadLibraryExW(L"dwmapi.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!dwm) return;
+    SetAttr set = (SetAttr)(void *)GetProcAddress(dwm, "DwmSetWindowAttribute");
+    if (set) {
+        BOOL dark = TRUE;
+        COLORREF cap = C_PANEL;
+        set(h, 20, &dark, sizeof dark);    /* DWMWA_USE_IMMERSIVE_DARK_MODE */
+        set(h, 19, &dark, sizeof dark);    /* pre-20H1 builds */
+        set(h, 35, &cap, sizeof cap);      /* DWMWA_CAPTION_COLOR */
+    }
+}
+
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
 {
+    /* restrict any later DLL loads (shell, COM) to System32 */
+    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
+
     (void)prev;
     g_inst = inst;
     g_ar = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_ARABIC;
@@ -703,11 +752,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     HWND h = CreateWindowExW(ex, L"DaoSetup", tr(L"DAO Setup", L"تثبيت DAO"), style,
                              (GetSystemMetrics(SM_CXSCREEN) - ww) / 2, (GetSystemMetrics(SM_CYSCREEN) - wh) / 2,
                              ww, wh, NULL, NULL, inst, NULL);
-    BOOL dark = TRUE;
-    DwmSetWindowAttribute(h, 20, &dark, sizeof dark);
-    DwmSetWindowAttribute(h, 19, &dark, sizeof dark);
-    COLORREF cap = C_PANEL;
-    DwmSetWindowAttribute(h, 35, &cap, sizeof cap);
+    dark_title_bar(h);
     ShowWindow(h, show);
     UpdateWindow(h);
 

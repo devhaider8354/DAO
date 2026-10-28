@@ -135,11 +135,50 @@ static void url_decode(const WCHAR *in, WCHAR *out, size_t n)
     }
 }
 
-static void sanitize_name(WCHAR *s)
+static int is_bidi_control(WCHAR c)
 {
-    for (; *s; s++)
-        if (wcschr(L"\\/:*?\"<>|", *s) || *s < 32) *s = L'_';
+    return c == 0x200E || c == 0x200F || (c >= 0x202A && c <= 0x202E) || (c >= 0x2066 && c <= 0x2069);
 }
+
+/* CON, PRN, AUX, NUL, COM1-9, LPT1-9 (with or without an extension) open devices, not files. */
+static int is_reserved_name(const WCHAR *s)
+{
+    static const WCHAR *names[] = { L"CON", L"PRN", L"AUX", L"NUL", NULL };
+    size_t base = wcscspn(s, L".");
+    for (int i = 0; names[i]; i++)
+        if (base == 3 && !_wcsnicmp(s, names[i], 3)) return 1;
+    if (base == 4 && (!_wcsnicmp(s, L"COM", 3) || !_wcsnicmp(s, L"LPT", 3)) && s[3] >= L'1' && s[3] <= L'9')
+        return 1;
+    return 0;
+}
+
+/* Make a server-supplied name safe to create on disk: no path separators or
+   reserved characters, no bidi overrides (e.g. "invoice\u202Efdp.exe" posing
+   as a PDF), no device names, no trailing dots or spaces. */
+void dl_sanitize_name(WCHAR *s)
+{
+    WCHAR *w = s;
+    for (WCHAR *p = s; *p; p++) {
+        WCHAR c = *p;
+        if (is_bidi_control(c)) continue;
+        if (wcschr(L"\\/:*?\"<>|", c) || c < 32) c = L'_';
+        *w++ = c;
+    }
+    *w = 0;
+
+    WCHAR *start = s;
+    while (*start == L' ' || *start == L'.') start++;
+    if (start != s) memmove(s, start, (wcslen(start) + 1) * sizeof(WCHAR));
+    size_t n = wcslen(s);
+    while (n && (s[n - 1] == L' ' || s[n - 1] == L'.')) s[--n] = 0;
+
+    if (!s[0]) { wcscpy(s, L"download.bin"); return; }
+    if (is_reserved_name(s) && n + 1 < MAX_PATH) {
+        memmove(s + 1, s, (n + 1) * sizeof(WCHAR));
+        s[0] = L'_';
+    }
+}
+
 
 /* ---------- File names embedded in token (JWT) links ---------- */
 static int b64url_val(char c)
@@ -294,9 +333,9 @@ static void name_from_path(const WCHAR *path, WCHAR *out, size_t n)
     WCHAR *s = wcsrchr(tmp, L'/');
     s = s ? s + 1 : tmp;
     if (!*s) { wcsncpy(out, L"download.bin", n); return; }
-    if (name_from_jwt(s, out, n)) { sanitize_name(out); limit_name(out); return; }
+    if (name_from_jwt(s, out, n)) { dl_sanitize_name(out); limit_name(out); return; }
     url_decode(s, out, n);
-    sanitize_name(out);
+    dl_sanitize_name(out);
     limit_name(out);
 }
 
@@ -325,7 +364,7 @@ static int name_from_disposition(const WCHAR *cd, WCHAR *out, size_t n)
     while (*p && *p != L'"' && *p != L';' && i < ARRAYSIZE(tmp) - 1) tmp[i++] = *p++;
     tmp[i] = 0;
     url_decode(tmp, out, n);
-    sanitize_name(out);
+    dl_sanitize_name(out);
     limit_name(out);
     return out[0] != 0;
 }
@@ -373,24 +412,57 @@ static void add_header(HINTERNET req, const WCHAR *name, const WCHAR *value)
 }
 
 /* Replay browser headers so links that need a login session keep working. */
-static void add_browser_headers(Download *d, HINTERNET req)
+static void add_browser_headers(Download *d, const UrlParts *u, HINTERNET req)
 {
     if (d->ua && d->ua[0])           add_header(req, L"User-Agent", d->ua);
     if (d->referer && d->referer[0]) add_header(req, L"Referer", d->referer);
-    if (d->cookie && d->cookie[0] && !_wcsicmp(d->cookie_host, d->u.host))
+    if (d->cookie && d->cookie[0] && !_wcsicmp(d->cookie_host, u->host))
         add_header(req, L"Cookie", d->cookie);
 }
 
-static DWORD http_get(Download *d, int slot, LONGLONG from, LONGLONG to, HttpReq *r)
+/* Resolve a Location header against the current URL. */
+static int resolve_location(const UrlParts *cur, const WCHAR *loc, UrlParts *out)
+{
+    WCHAR url[8192 + 600];
+    const WCHAR *scheme = cur->secure ? L"https" : L"http";
+    INTERNET_PORT def = cur->secure ? 443 : 80;
+    WCHAR origin[600];
+    if (cur->port == def) swprintf(origin, ARRAYSIZE(origin), L"%ls://%ls", scheme, cur->host);
+    else                  swprintf(origin, ARRAYSIZE(origin), L"%ls://%ls:%u", scheme, cur->host, cur->port);
+
+    if (!_wcsnicmp(loc, L"http://", 7) || !_wcsnicmp(loc, L"https://", 8)) {
+        wcsncpy(url, loc, ARRAYSIZE(url) - 1);
+        url[ARRAYSIZE(url) - 1] = 0;
+    } else if (loc[0] == L'/' && loc[1] == L'/') {
+        swprintf(url, ARRAYSIZE(url), L"%ls:%ls", scheme, loc);
+    } else if (loc[0] == L'/') {
+        swprintf(url, ARRAYSIZE(url), L"%ls%ls", origin, loc);
+    } else {
+        WCHAR dir[8192];
+        wcsncpy(dir, cur->path, ARRAYSIZE(dir) - 1);
+        dir[ARRAYSIZE(dir) - 1] = 0;
+        WCHAR *q = wcschr(dir, L'?');
+        if (q) *q = 0;
+        WCHAR *slash = wcsrchr(dir, L'/');
+        if (slash) slash[1] = 0; else wcscpy(dir, L"/");
+        swprintf(url, ARRAYSIZE(url), L"%ls%ls%ls", origin, dir, loc);
+    }
+    return parse_url(url, out);
+}
+
+static void http_close(Download *d, int slot, HttpReq *r);
+
+/* One request, redirects disabled. Returns the HTTP status or 0 on failure. */
+static DWORD http_send(Download *d, int slot, const UrlParts *u, LONGLONG from, LONGLONG to, HttpReq *r)
 {
     DWORD status = 0, sz = sizeof(status);
     r->conn = r->req = NULL;
 
-    r->conn = WinHttpConnect(g_session, d->u.host, d->u.port, 0);
+    r->conn = WinHttpConnect(g_session, u->host, u->port, 0);
     if (!r->conn) return 0;
-    r->req = WinHttpOpenRequest(r->conn, L"GET", d->u.path, NULL, WINHTTP_NO_REFERER,
+    r->req = WinHttpOpenRequest(r->conn, L"GET", u->path, NULL, WINHTTP_NO_REFERER,
                                 WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                (d->u.secure ? WINHTTP_FLAG_SECURE : 0) | WINHTTP_FLAG_REFRESH);
+                                (u->secure ? WINHTTP_FLAG_SECURE : 0) | WINHTTP_FLAG_REFRESH);
     if (!r->req) return 0;
 
     if (slot >= 0) {
@@ -405,6 +477,10 @@ static DWORD http_get(Download *d, int slot, LONGLONG from, LONGLONG to, HttpReq
         LeaveCriticalSection(&d->lock);
     }
 
+    /* Redirects are followed manually so cookies never reach another host. */
+    DWORD feature = WINHTTP_DISABLE_REDIRECTS;
+    WinHttpSetOption(r->req, WINHTTP_OPTION_DISABLE_FEATURE, &feature, sizeof(feature));
+
     if (from >= 0) {
         WCHAR hdr[128];
         if (to >= 0) swprintf(hdr, 128, L"Range: bytes=%lld-%lld", from, to);
@@ -412,7 +488,7 @@ static DWORD http_get(Download *d, int slot, LONGLONG from, LONGLONG to, HttpReq
         WinHttpAddRequestHeaders(r->req, hdr, (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
     }
     WinHttpAddRequestHeaders(r->req, L"Accept-Encoding: identity", (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
-    add_browser_headers(d, r->req);
+    add_browser_headers(d, u, r->req);
 
     if (!WinHttpSendRequest(r->req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
         !WinHttpReceiveResponse(r->req, NULL))
@@ -420,6 +496,36 @@ static DWORD http_get(Download *d, int slot, LONGLONG from, LONGLONG to, HttpReq
     WinHttpQueryHeaders(r->req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                         WINHTTP_HEADER_NAME_BY_INDEX, &status, &sz, WINHTTP_NO_HEADER_INDEX);
     return status;
+}
+
+#define MAX_REDIRECTS 10
+
+/* GET with an optional Range header, following redirects. The URL that
+   answered is stored in *final when given. */
+static DWORD http_get(Download *d, int slot, LONGLONG from, LONGLONG to, HttpReq *r, UrlParts *final)
+{
+    UrlParts cur = d->u;
+    WCHAR loc[8192];
+
+    for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
+        DWORD st = http_send(d, slot, &cur, from, to, r);
+        int redirect = st == 301 || st == 302 || st == 303 || st == 307 || st == 308;
+        if (!redirect) {
+            if (final) *final = cur;
+            return st;
+        }
+        DWORD sz = sizeof(loc);
+        UrlParts next;
+        int ok = WinHttpQueryHeaders(r->req, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX,
+                                     loc, &sz, WINHTTP_NO_HEADER_INDEX)
+                 && resolve_location(&cur, loc, &next)
+                 && !(cur.secure && !next.secure);              /* no HTTPS -> HTTP downgrade */
+        http_close(d, slot, r);
+        if (!ok) break;
+        cur = next;
+    }
+    SetLastError(ERROR_WINHTTP_REDIRECT_FAILED);
+    return 0;
 }
 
 static void http_close(Download *d, int slot, HttpReq *r)
@@ -456,7 +562,8 @@ static int probe(Download *d, int assign_path)
     int ranges = 0;
 
     if (!parse_url(d->url, &d->u)) { set_error(d, ERR_BAD_URL, 0); return 0; }
-    st = http_get(d, 0, 0, 0, &r);
+    UrlParts final_url;
+    st = http_get(d, 0, 0, 0, &r, &final_url);
     if (st == 0) {
         DWORD e = GetLastError();
         http_close(d, 0, &r);
@@ -470,11 +577,7 @@ static int probe(Download *d, int assign_path)
         return 0;
     }
 
-    DWORD sz = sizeof(buf);
-    if (WinHttpQueryOption(r.req, WINHTTP_OPTION_URL, buf, &sz)) {
-        UrlParts fin;
-        if (parse_url(buf, &fin)) d->u = fin;
-    }
+    d->u = final_url;
     if (st == 206 && query_header(r.req, WINHTTP_QUERY_CONTENT_RANGE, buf, ARRAYSIZE(buf))) {
         WCHAR *slash = wcschr(buf, L'/');
         if (slash && slash[1] != L'*') { total = _wtoi64(slash + 1); ranges = total > 0; }
@@ -492,7 +595,7 @@ static int probe(Download *d, int assign_path)
         WCHAR alt[MAX_PATH] = L"";
         if (parse_url(d->url, &orig)) {
             const WCHAR *seg = wcsrchr(orig.path, L'/');
-            if (seg && name_from_jwt(seg + 1, alt, MAX_PATH)) { sanitize_name(alt); limit_name(alt); wcscpy(name, alt); }
+            if (seg && name_from_jwt(seg + 1, alt, MAX_PATH)) { dl_sanitize_name(alt); limit_name(alt); wcscpy(name, alt); }
         }
         if (!name[0]) name_from_path(d->u.path, name, MAX_PATH);
         if (query_header(r.req, WINHTTP_QUERY_CONTENT_TYPE, buf, ARRAYSIZE(buf)))
@@ -504,6 +607,7 @@ static int probe(Download *d, int assign_path)
     d->total  = total;
     d->ranges = ranges;
     if (!d->name_fixed || !d->name[0]) wcsncpy(d->name, name, MAX_PATH - 1);
+    dl_sanitize_name(d->name);
     limit_name(d->name);
     if (assign_path && d->path[0]) {
         /* an old path with an over-long name that never got a .part file: pick a new one */
@@ -663,7 +767,7 @@ static int download_segment(Download *d, int slot, int si, char *buf)
     LeaveCriticalSection(&d->lock);
     if (to >= 0 && from >= to) return 1;
 
-    st = d->ranges ? http_get(d, slot, from, to - 1, &r) : http_get(d, slot, -1, -1, &r);
+    st = d->ranges ? http_get(d, slot, from, to - 1, &r, NULL) : http_get(d, slot, -1, -1, &r, NULL);
     if (st == 0) { http_close(d, slot, &r); return 0; }
     if ((d->ranges && st != 206) || (!d->ranges && st != 200)) {
         http_close(d, slot, &r);
@@ -927,12 +1031,25 @@ static WCHAR *dupw(const WCHAR *s)
 
 void dl_set_headers(Download *d, const WCHAR *cookie, const WCHAR *referer, const WCHAR *ua)
 {
-    free(d->cookie); free(d->referer); free(d->ua);
-    d->cookie  = dupw(cookie);
-    d->referer = dupw(referer);
-    d->ua      = dupw(ua);
-    UrlParts u;
-    if (parse_url(d->url, &u)) wcsncpy(d->cookie_host, u.host, ARRAYSIZE(d->cookie_host) - 1);
+    /* duplicate first: callers may pass the current values back in */
+    WCHAR *c = dupw(cookie), *r = dupw(referer), *u = dupw(ua);
+    dl_clear_cookie(d);
+    free(d->referer);
+    free(d->ua);
+    d->cookie  = c;
+    d->referer = r;
+    d->ua      = u;
+    UrlParts p;
+    if (parse_url(d->url, &p)) wcsncpy(d->cookie_host, p.host, ARRAYSIZE(d->cookie_host) - 1);
+}
+
+void dl_clear_cookie(Download *d)
+{
+    if (d->cookie) {
+        SecureZeroMemory(d->cookie, wcslen(d->cookie) * sizeof(WCHAR));
+        free(d->cookie);
+        d->cookie = NULL;
+    }
 }
 
 int dl_fetch_info(Download *d)
@@ -988,6 +1105,8 @@ void dl_free(Download *d)
     if (!d) return;
     if (d->thread) { WaitForSingleObject(d->thread, INFINITE); CloseHandle(d->thread); }
     DeleteCriticalSection(&d->lock);
-    free(d->cookie); free(d->referer); free(d->ua);
+    dl_clear_cookie(d);
+    free(d->referer);
+    free(d->ua);
     free(d);
 }
