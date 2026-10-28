@@ -1,0 +1,26 @@
+#include <winuser.h>
+
+1 ICON "dao.ico"
+1 RT_MANIFEST "dao.manifest"
+
+1 VERSIONINFO
+FILEVERSION 2,3,0,0
+PRODUCTVERSION 2,3,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "FLOW POINT"
+      VALUE "FileDescription", "DAO Download Manager"
+      VALUE "ProductName", "DAO"
+      VALUE "FileVersion", "2.3"
+      VALUE "ProductVersion", "2.3"
+      VALUE "LegalCopyright", "Copyright (c) 2026 FLOW POINT"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

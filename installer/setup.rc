@@ -1,0 +1,25 @@
+/* Installer resources. Paths are relative to this file; build the app first. */
+#include <winuser.h>
+
+1 ICON "../res/dao.ico"
+1 RT_MANIFEST "setup.manifest"
+
+1000 RCDATA "../build/dao.exe"
+1001 RCDATA "../build/dao-host.exe"
+1002 RCDATA "../build/dao-cli.exe"
+1003 RCDATA "../README.md"
+1004 RCDATA "../LICENSE"
+1005 RCDATA "../extension/manifest.json"
+1006 RCDATA "../extension/background.js"
+1007 RCDATA "../extension/popup.html"
+1008 RCDATA "../extension/popup.css"
+1009 RCDATA "../extension/popup.js"
+1010 RCDATA "../extension/_locales/en/messages.json"
+1011 RCDATA "../extension/_locales/ar/messages.json"
+1012 RCDATA "../extension/icons/16.png"
+1013 RCDATA "../extension/icons/32.png"
+1014 RCDATA "../extension/icons/48.png"
+1015 RCDATA "../extension/icons/128.png"
+1016 RCDATA "../extension/icons/16-off.png"
+1017 RCDATA "../extension/icons/32-off.png"
+1018 RCDATA "../extension/icons/48-off.png"

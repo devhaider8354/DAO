@@ -1,0 +1,58 @@
+{
+  "extName": {
+    "message": "DAO Download Manager"
+  },
+  "extDescription": {
+    "message": "Sends browser downloads to DAO for fast multi-connection, resumable downloading."
+  },
+  "menuDownload": {
+    "message": "Download with DAO"
+  },
+  "tagline": {
+    "message": "Fast download manager"
+  },
+  "captureTitle": {
+    "message": "Capture downloads"
+  },
+  "captureOn": {
+    "message": "Every Chrome download goes to DAO"
+  },
+  "captureOff": {
+    "message": "Paused - Chrome downloads files itself"
+  },
+  "statusChecking": {
+    "message": "Checking connection to DAO..."
+  },
+  "statusRunning": {
+    "message": "Connected to DAO ✓"
+  },
+  "statusReady": {
+    "message": "Connected ✓ (DAO starts automatically when needed)"
+  },
+  "statusMissing": {
+    "message": "DAO is not connected - run dao.exe once, then restart Chrome"
+  },
+  "advanced": {
+    "message": "Advanced settings"
+  },
+  "minSize": {
+    "message": "Ignore files smaller than (KB)"
+  },
+  "skipExts": {
+    "message": "File types Chrome should download itself"
+  },
+  "skipHosts": {
+    "message": "Sites Chrome should download from itself"
+  },
+  "stats": {
+    "message": "$COUNT$ downloads captured so far",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "hint": {
+    "message": "Right-click any link → Download with DAO"
+  }
+}

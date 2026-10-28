@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="icons/48.png" alt="" width="36" height="36">
+    <div>
+      <h1>DAO</h1>
+      <p data-i18n="tagline"></p>
+    </div>
+  </header>
+
+  <label class="switch-row">
+    <span>
+      <strong data-i18n="captureTitle"></strong>
+      <small id="stateText"></small>
+    </span>
+    <input type="checkbox" id="enabled">
+    <span class="switch"></span>
+  </label>
+
+  <div id="status" class="status checking">
+    <span class="dot"></span><span id="statusText" data-i18n="statusChecking"></span>
+  </div>
+
+  <details>
+    <summary data-i18n="advanced"></summary>
+    <label class="field">
+      <span data-i18n="minSize"></span>
+      <input type="number" id="minSizeKB" min="0" step="100" placeholder="0">
+    </label>
+    <label class="field">
+      <span data-i18n="skipExts"></span>
+      <input type="text" id="skipExts" placeholder="crx, pdf" dir="ltr">
+    </label>
+    <label class="field">
+      <span data-i18n="skipHosts"></span>
+      <input type="text" id="skipHosts" placeholder="example.com" dir="ltr">
+    </label>
+  </details>
+
+  <footer>
+    <span id="stats"></span>
+    <span class="hint" data-i18n="hint"></span>
+  </footer>
+  <script src="popup.js"></script>
+</body>
+</html>

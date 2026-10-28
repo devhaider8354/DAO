@@ -1,0 +1,58 @@
+{
+  "extName": {
+    "message": "DAO مدير التحميل"
+  },
+  "extDescription": {
+    "message": "يرسل تحميلات المتصفح إلى برنامج DAO للتحميل السريع بعدة اتصالات مع الاستكمال."
+  },
+  "menuDownload": {
+    "message": "تحميل بواسطة DAO"
+  },
+  "tagline": {
+    "message": "مدير التحميل السريع"
+  },
+  "captureTitle": {
+    "message": "التقاط التحميلات"
+  },
+  "captureOn": {
+    "message": "أي تحميل من كروم يذهب إلى DAO"
+  },
+  "captureOff": {
+    "message": "متوقف - كروم يحمّل الملفات بنفسه"
+  },
+  "statusChecking": {
+    "message": "جارٍ فحص الاتصال بالبرنامج..."
+  },
+  "statusRunning": {
+    "message": "متصل ببرنامج DAO ✓"
+  },
+  "statusReady": {
+    "message": "متصل ✓ (البرنامج يُفتح تلقائياً عند التحميل)"
+  },
+  "statusMissing": {
+    "message": "البرنامج غير مربوط - شغّل dao.exe مرة واحدة ثم أعد تشغيل كروم"
+  },
+  "advanced": {
+    "message": "إعدادات متقدمة"
+  },
+  "minSize": {
+    "message": "تجاهل الملفات الأصغر من (KB)"
+  },
+  "skipExts": {
+    "message": "امتدادات يحمّلها كروم بنفسه"
+  },
+  "skipHosts": {
+    "message": "مواقع يحمّل منها كروم بنفسه"
+  },
+  "stats": {
+    "message": "تم التقاط $COUNT$ تحميل حتى الآن",
+    "placeholders": {
+      "count": {
+        "content": "$1"
+      }
+    }
+  },
+  "hint": {
+    "message": "كلك يمين على أي رابط ← تحميل بواسطة DAO"
+  }
+}
