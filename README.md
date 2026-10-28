@@ -1,5 +1,7 @@
 # DAO Download Manager
 
+[![Build](https://github.com/devhaider8354/DAO/actions/workflows/build.yml/badge.svg)](https://github.com/devhaider8354/DAO/actions/workflows/build.yml)
+
 **English** | [العربية](README.ar.md)
 
 DAO is a fast, lightweight download manager for Windows written in plain C on top of the Win32 API and WinHTTP. It splits every file into segments, downloads them over multiple connections at once, resumes interrupted downloads and integrates with Chrome, Edge and Brave.

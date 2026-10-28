@@ -2,6 +2,8 @@
 
 # DAO مدير التحميل
 
+[![Build](https://github.com/devhaider8354/DAO/actions/workflows/build.yml/badge.svg)](https://github.com/devhaider8354/DAO/actions/workflows/build.yml)
+
 [English](README.md) | **العربية**
 
 DAO مدير تحميل سريع وخفيف لنظام ويندوز، مكتوب بلغة C باستخدام Win32 API و WinHTTP. يقسّم كل ملف إلى أجزاء ويحمّلها بعدة اتصالات في نفس الوقت، ويستكمل التحميلات المنقطعة، ويرتبط مع متصفحات كروم وإيدج وبريف.
